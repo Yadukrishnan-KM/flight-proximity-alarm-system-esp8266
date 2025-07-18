@@ -1,5 +1,8 @@
 // utils.cpp
 #include "utils.h"
+#include <math.h> // For sin, cos, atan2, sqrt, PI
+#include "globals.h" // For currentSettings
+#include <NTPClient.h> // For timeClient (though it's extern from globals.h)
 
 /**
  * @brief Converts degrees to radians.
@@ -15,9 +18,10 @@ float degToRad(float deg) {
  * @param lat1 Latitude of point 1 (degrees).
  * @param lon1 Longitude of point 1 (degrees).
  * @param lat2 Latitude of point 2 (degrees).
- * @param lon2 Longitude of point 2 (degrees).
+ * @param lon2 Longitude of point 2 (degrees).\
  * @return Distance in kilometers.
  */
+// --- FIX: Definition is ONLY here ---
 float calculateDistance(float lat1, float lon1, float lat2, float lon2) {
     const float R = 6371.0; // Earth's radius in kilometers
 
@@ -55,14 +59,17 @@ int determineProximityLevel(float distance_km) {
 /**
  * @brief Gets current timestamp string.
  * @return Formatted timestamp string (e.g., "YYYY-MM-DD HH:MM:SS").
+ * NOTE: This function's purpose might overlap with getCurrentFormattedTime in flight_scanner.cpp.
+ * Consider consolidating if they serve the same purpose.
  */
 String getTimestamp() {
-    timeClient.update();
-    unsigned long epochTime = timeClient.getEpochTime();
-    struct tm *ptm = gmtime((time_t *)&epochTime);
-    char buf[20];
-    sprintf(buf, "%04d-%02d-%02d %02d:%02d:%02d",
-            ptm->tm_year + 1900, ptm->tm_mon + 1, ptm->tm_mday,
-            ptm->tm_hour, ptm->tm_min, ptm->tm_sec);
-    return String(buf);
+    time_t rawTime = timeClient.getEpochTime();
+    struct tm * ti;
+    ti = localtime(&rawTime);
+
+    char buffer[20];
+    sprintf(buffer, "%04d-%02d-%02d %02d:%02d:%02d",
+            ti->tm_year + 1900, ti->tm_mon + 1, ti->tm_mday,
+            ti->tm_hour, ti->tm_min, ti->tm_sec);
+    return String(buffer);
 }

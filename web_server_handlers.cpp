@@ -1,5 +1,15 @@
 // web_server_handlers.cpp
 #include "web_server_handlers.h"
+#include "globals.h"        // Assuming this includes currentSettings, scanHistory, etc.
+#include "settings_manager.h" // Assuming saveSettings() is defined here
+#include <ArduinoJson.h>    // For JSON parsing and serialization
+#include <ESP8266WebServer.h> // For WebServer functions
+#include <FS.h>             // For LittleFS filesystem access
+#include <LittleFS.h>       // For LittleFS specific functions
+// #include <ESP.h>            // Removed: ESP.h is typically not needed for ESP.restart() on ESP8266
+
+// Assuming 'server' is an extern declaration in web_server_handlers.h or globals.h
+// extern ESP8266WebServer server;
 
 /**
  * @brief Serves a file from LittleFS.
@@ -74,7 +84,7 @@ void handleSaveSettings() {
 
         saveSettings(); // Save updated settings to LittleFS
 
-        bool wifiSettingsChanged = (oldSrid != currentSettings.ssid || oldPassword != currentSettings.password);
+        bool wifiSettingsChanged = (oldSsid != currentSettings.ssid || oldPassword != currentSettings.password);
 
         server.send(200, "application/json", "{\"status\":\"success\", \"message\":\"Settings saved!\"}");
 
@@ -107,7 +117,7 @@ void handleCurrentFlightsApi() {
     JsonArray flightsArray = doc.to<JsonArray>();
 
     for (const auto& flight : currentFlights) {
-        JsonObject flightObj = flightsArray.add<JsonObject>();
+        JsonObject flightObj = flightsArray.createNestedObject();
         flightObj["icao24"] = flight.icao24;
         flightObj["callsign"] = flight.callsign;
         flightObj["operator"] = flight.operatorName;
@@ -131,11 +141,11 @@ void handleCurrentFlightsApi() {
  * @brief Handles API request for scan history.
  */
 void handleScanHistoryApi() {
-    StaticJsonDocument doc; // Adjust size based on expected history data size
+    StaticJsonDocument<20480> doc; // Adjust size based on expected history data size
     JsonArray historyArray = doc.to<JsonArray>();
 
     for (const auto& entry : scanHistory) {
-        JsonObject entryObj = historyArray.add<JsonObject>();
+        JsonObject entryObj = historyArray.createNestedObject();
         entryObj["timestamp"] = entry.timestamp;
         entryObj["level1"] = entry.level1;
         entryObj["level2"] = entry.level2;
@@ -145,7 +155,7 @@ void handleScanHistoryApi() {
 
         JsonArray flightsAtScanArray = entryObj.createNestedArray("flights_at_scan");
         for (const auto& flight : entry.flights_at_scan) {
-            JsonObject flightObj = flightsAtScanArray.add<JsonObject>();
+            JsonObject flightObj = flightsAtScanArray.createNestedObject();
             flightObj["icao24"] = flight.icao24;
             flightObj["callsign"] = flight.callsign;
             flightObj["operator"] = flight.operatorName;

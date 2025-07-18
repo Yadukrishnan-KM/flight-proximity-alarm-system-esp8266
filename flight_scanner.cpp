@@ -1,151 +1,225 @@
 // flight_scanner.cpp
 #include "flight_scanner.h"
+#include "globals.h"
+#include "settings_manager.h" // Assuming settings_manager has functions to get current settings
+#include "alarm_manager.h"    // For updateLED and playAlarmSound
+#include <ArduinoJson.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClient.h>       // <-- ADDED THIS LINE: Required for the updated http.begin() method
+#include <math.h>             // For round() and other math functions
+#include <ESP8266WiFi.h>      // <-- ADDED THIS LINE: Necessary for WiFi.status() and overall WiFi connectivity
+
+// Forward declaration for calculateDistance (defined later in this file)
+// float calculateDistance(float lat1, float lon1, float lat2, float lon2); // Moved to utils.h
+// int getProximityLevel(float distance, float r1, float r2, float r3); // Renamed to determineProximityLevel in utils.h
+void updateScanHistory(int level1Count, int level2Count, int level3Count, int totalCount, const std::vector<FlightData>& flights);
+String getCurrentFormattedTime();
 
 /**
- * @brief Performs a single flight data scan.
- * This function is called periodically by the flightScanTicker.
+ * @brief Performs a flight scan by querying the OpenSky Network API.
  */
 void performFlightScan() {
     Serial.println("Performing flight scan...");
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi not connected. Cannot perform flight scan.");
+        return;
+    }
+
+    WiFiClient client;
     HTTPClient http;
-    String url = "http://api.opensky-network.org/api/states/all?"; // Use HTTP for OpenSky
-    url += "lamin=" + String(currentSettings.latitude - 1.0); // Approx 1 degree lat = 111km
-    url += "&lomin=" + String(currentSettings.longitude - 1.0);
-    url += "&lamax=" + String(currentSettings.latitude + 1.0);
-    url += "&lomax=" + String(currentSettings.longitude + 1.0);
 
-    // Note: OpenSky API does not directly support radius.
-    // We fetch a bounding box and then filter by calculated distance.
-    // The 1.0 degree delta is a rough approximation for a 100-110km box.
+    // Construct the API URL using current settings
+    String url = currentSettings.apiServer + "/api/states/all?" +
+                 "lamin=" + String(currentSettings.latitude - 1.0) + // +/- 1 degree for bbox
+                 "&lamax=" + String(currentSettings.latitude + 1.0) +
+                 "&lomin=" + String(currentSettings.longitude - 1.0) +
+                 "&lomax=" + String(currentSettings.longitude + 1.0);
 
-    Serial.print("Fetching from: ");
+    Serial.print("Requesting URL: ");
     Serial.println(url);
 
-    http.begin(url);
-    int httpCode = http.GET();
+    http.begin(client, url);
 
-    currentFlights.clear(); // Clear previous flights
-    int newOverallAlarmLevel = 0;
-    String scanStatus = "Success";
+    // Add API Key header if available
+    if (currentSettings.apiKey.length() > 0) {
+        http.addHeader("Authorization", "Bearer " + currentSettings.apiKey);
+    }
 
-    if (httpCode > 0) {
-        if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+    int httpResponseCode = http.GET();
+
+    if (httpResponseCode > 0) {
+        Serial.printf("[HTTP] GET... code: %d\n", httpResponseCode);
+        if (httpResponseCode == HTTP_CODE_OK) {
             String payload = http.getString();
-            // Serial.println(payload); // For debugging API response
+            // Serial.println(payload); // For debugging: print the full JSON payload
 
-            StaticJsonDocument<8192> doc; // Increased size for larger payloads
+            // Parse JSON response
+            DynamicJsonDocument doc(4096); // Increased buffer size
             DeserializationError error = deserializeJson(doc, payload);
 
             if (error) {
                 Serial.print(F("deserializeJson() failed: "));
                 Serial.println(error.f_str());
-                scanStatus = "JSON Error";
-            } else {
-                JsonArray states = doc["states"].as<JsonArray>();
-                if (!states) {
-                    Serial.println("No 'states' array found in JSON response.");
-                    scanStatus = "No States Data";
+                // Attempt to print part of the payload if deserialization fails for debugging
+                if (payload.length() > 200) {
+                    Serial.print("Partial payload: ");
+                    Serial.println(payload.substring(0, 200));
                 } else {
-                    int level1Count = 0;
-                    int level2Count = 0;
-                    int level3Count = 0;
+                    Serial.print("Payload: ");
+                    Serial.println(payload);
+                }
+                http.end();
+                return;
+            }
 
-                    for (JsonObject state : states) {
-                        // Example data structure from OpenSky:
-                        // [icao24, callsign, origin_country, time_position, last_contact, longitude, latitude, baro_altitude,
-                        //  on_ground, velocity, true_track, vertical_rate, sensors, geo_altitude, squawk, spi, position_source]
-                        float flightLat = state[6] | 0.0; // latitude
-                        float flightLon = state[5] | 0.0; // longitude
-                        float baroAltitude = state[7] | 0.0; // baro_altitude in meters
-                        float velocity_ms = state[9] | 0.0; // velocity in m/s
-                        float trueTrack = state[10] | 0.0; // true_track in degrees
+            JsonArray states_array = doc["states"].as<JsonArray>(); // Get the states array
+            if (states_array.isNull()) {
+                Serial.println("Error: 'states' array not found or invalid in JSON response.");
+                http.end();
+                return;
+            }
 
-                        float distance = calculateDistance(currentSettings.latitude, currentSettings.longitude, flightLat, flightLon);
-                        int proximity = determineProximityLevel(distance);
+            currentFlights.clear(); // Clear previous flight data
+            int level1Count = 0;
+            int level2Count = 0;
+            int level3Count = 0;
 
-                        // Only add flights within the outermost radius
-                        if (proximity > 0) {
-                            FlightData flight;
-                            flight.icao24 = state[0].as<String>();
-                            flight.callsign = state[1].as<String>();
-                            flight.origin_country = state[2].as<String>();
-                            flight.altitude_baro = baroAltitude;
-                            flight.velocity = velocity_ms;
-                            flight.true_track = trueTrack;
-                            flight.distance_km = distance;
-                            flight.proximity_level = proximity;
-                            // Dummy values for operator, source, destination (OpenSky does not provide these directly in /states/all)
-                            flight.operatorName = "N/A"; // OpenSky /states/all doesn't have operator
-                            flight.source = "N/A";       // OpenSky /states/all doesn't have source
-                            flight.destination = "N/A";  // OpenSky /states/all doesn't have destination
-                            flight.international_domestic = "N/A"; // OpenSky /states/all doesn't have this
+            for (JsonArray state : states_array) { // Iterate through each flight state (which is an array)
+                if (state.isNull()) {
+                    Serial.println("Warning: Found null state entry in JSON response. Skipping.");
+                    continue;
+                }
 
-                            currentFlights.push_back(flight);
+                // OpenSky Network API states array indices:
+                // 0: icao24 (string)
+                // 1: callsign (string, can be null)
+                // 2: origin_country (string)
+                // 5: longitude (float, can be null)
+                // 6: latitude (float, can be null)
+                // 7: baro_altitude (float, can be null)
+                // 9: velocity (float, can be null)
+                // 10: true_track (float, can be null)
 
-                            // Update counts and overall alarm level
-                            if (proximity == 1) level1Count++;
-                            if (proximity == 2) level2Count++;
-                            if (proximity == 3) level3Count++;
-                            newOverallAlarmLevel = max(newOverallAlarmLevel, proximity);
-                        }
+                // Check if latitude and longitude exist and are not null
+                if (!state[6].isNull() && !state[5].isNull()) {
+                    float flightLat = state[6].as<float>();
+                    float flightLon = state[5].as<float>();
+
+                    float distance = calculateDistance(currentSettings.latitude, currentSettings.longitude, flightLat, flightLon);
+                    int proximityLevel = determineProximityLevel(distance);
+
+                    FlightData flight;
+                    flight.icao24 = state[0].as<String>();
+                    flight.callsign = state[1].isNull() ? "N/A" : state[1].as<String>(); // Handle null callsign
+                    flight.origin_country = state[2].as<String>();
+                    flight.latitude = flightLat;    // ADDED: Assign latitude
+                    flight.longitude = flightLon;   // ADDED: Assign longitude
+                    flight.altitude_baro = state[7] | 0.0; // Use | for default if null
+                    flight.velocity = state[9] | 0.0;       // Use | for default if null
+                    flight.true_track = state[10] | 0.0;    // Use | for default if null
+                    flight.distance_km = distance;
+                    flight.proximity_level = proximityLevel;
+                    flight.operatorName = "N/A"; // OpenSky /states/all does not directly provide this
+                    flight.destination = "N/A";  // OpenSky /states/all does not directly provide this
+                    flight.source = "N/A";       // OpenSky /states/all does not directly provide this
+                    flight.international_domestic = "Unknown"; // Derive if possible from other data, else default
+
+                    currentFlights.push_back(flight);
+
+                    if (proximityLevel == 1) {
+                        level1Count++;
+                    } else if (proximityLevel == 2) {
+                        level2Count++;
+                    } else if (proximityLevel == 3) {
+                        level3Count++;
                     }
-                    Serial.printf("Flights detected: L1: %d, L2: %d, L3: %d, Total: %d\n",
-                                  level1Count, level2Count, level3Count, currentFlights.size());
                 }
             }
-        } else {
-            Serial.printf("HTTP GET failed, error: %s\n", http.errorToString(httpCode).c_str());
-            scanStatus = "HTTP Error: " + String(httpCode);
+
+            int totalFlights = currentFlights.size();
+            Serial.printf("Scan complete. Total flights: %d, Level 1: %d, Level 2: %d, Level 3: %d\n",
+                          totalFlights, level1Count, level2Count, level3Count);
+
+            updateScanHistory(level1Count, level2Count, level3Count, totalFlights, currentFlights);
+
+            // Determine overall alarm level and update LED/sound
+            int newOverallAlarmLevel = 0;
+            if (level1Count > 0) {
+                newOverallAlarmLevel = 1;
+            } else if (level2Count > 0) {
+                newOverallAlarmLevel = 2;
+            } else if (level3Count > 0) {
+                newOverallAlarmLevel = 3;
+            }
+
+            if (newOverallAlarmLevel != currentOverallAlarmLevel) {
+                currentOverallAlarmLevel = newOverallAlarmLevel;
+                updateLED(currentOverallAlarmLevel);
+                if (currentSettings.soundWarning) {
+                    playAlarmSound(currentOverallAlarmLevel);
+                }
+            }
         }
     } else {
-        Serial.printf("HTTP GET failed, error: %s\n", http.errorToString(httpCode).c_str());
-        scanStatus = "Network Error";
+        Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpResponseCode).c_str());
     }
 
-    http.end(); // Free resources
-
-    // Update global alarm level and trigger sound/LED
-    if (newOverallAlarmLevel != currentOverallAlarmLevel) {
-        currentOverallAlarmLevel = newOverallAlarmLevel;
-        playAlarmSound(currentOverallAlarmLevel);
-        updateLED(currentOverallAlarmLevel);
-    }
-
-    // Add to scan history
-    ScanHistoryEntry newEntry;
-    newEntry.timestamp = getTimestamp();
-    newEntry.level1 = 0; // Will be calculated from currentFlights
-    newEntry.level2 = 0;
-    newEntry.level3 = 0;
-    newEntry.total = currentFlights.size();
-    newEntry.status = scanStatus;
-    newEntry.flights_at_scan = currentFlights; // Store a copy of current flights
-
-    for(const auto& flight : currentFlights) {
-        if(flight.proximity_level == 1) newEntry.level1++;
-        if(flight.proximity_level == 2) newEntry.level2++;
-        if(flight.proximity_level == 3) newEntry.level3++;
-    }
-
-    scanHistory.insert(scanHistory.begin(), newEntry); // Add to front
-    if (scanHistory.size() > MAX_SCAN_HISTORY) {
-        scanHistory.pop_back(); // Remove oldest if history exceeds limit
-    }
-
-    // Adjust scan frequency based on current alarm level
-    float nextScanInterval = currentSettings.noFlightScanFreq;
-    if (currentOverallAlarmLevel > 0) { // If any flights detected
-        nextScanInterval = currentSettings.flightPresentScanFreq;
-    }
-    flightScanTicker.once(nextScanInterval, performFlightScan); // Schedule next scan
-    Serial.printf("Next scan scheduled in %d seconds.\n", (int)nextScanInterval);
+    http.end(); // Free the resources
+    startFlightScanTimer(); // Restart the timer for the next scan
 }
 
 /**
- * @brief Starts the flight scan timer.
- * Initial call and re-scheduling after each scan.
+ * @brief Starts or restarts the flight scan timer based on detected flights.
  */
 void startFlightScanTimer() {
-    flightScanTicker.once(5, performFlightScan); // First scan 5 seconds after boot
-    Serial.printf("Initial flight scan scheduled in 5 seconds.\n");
+    unsigned long scanInterval = (currentFlights.empty() || currentOverallAlarmLevel == 0) ?
+                                 (unsigned long)currentSettings.noFlightScanFreq * 1000 :
+                                 (unsigned long)currentSettings.flightPresentScanFreq * 1000;
+
+    Serial.printf("Setting next scan in %lu seconds.\n", scanInterval / 1000);
+    flightScanTicker.once_ms(scanInterval, performFlightScan);
+}
+
+/**
+ * @brief Updates the scan history with results from the latest scan.
+ * @param level1Count Number of flights in Level 1.
+ * @param level2Count Number of flights in Level 2.
+ * @param level3Count Number of flights in Level 3.
+ * @param totalCount Total flights detected.
+ * @param flights Current list of flights (for modal details).
+ */
+void updateScanHistory(int level1Count, int level2Count, int level3Count, int totalCount, const std::vector<FlightData>& flights) {
+    ScanHistoryEntry newEntry;
+    newEntry.timestamp = getCurrentFormattedTime();
+    newEntry.level1 = level1Count;
+    newEntry.level2 = level2Count;
+    newEntry.level3 = level3Count;
+    newEntry.total = totalCount;
+    newEntry.status = (totalCount > 0) ? "Flights Detected" : "All Clear";
+    newEntry.flights_at_scan = flights; // Copy current flights for this scan
+
+    // Add new entry to the front
+    scanHistory.insert(scanHistory.begin(), newEntry);
+
+    // Keep history size limited
+    if (scanHistory.size() > MAX_SCAN_HISTORY) {
+        scanHistory.pop_back();
+    }
+}
+
+/**
+ * @brief Gets the current time formatted as a string.
+ * @return Formatted time string (e.g., "YYYY-MM-DD HH:MM:SS").
+ */
+String getCurrentFormattedTime() {
+    time_t rawTime = timeClient.getEpochTime();
+    struct tm * ti;
+    ti = localtime(&rawTime);
+
+    char buffer[20];
+    // Format: YYYY-MM-DD HH:MM:SS
+    sprintf(buffer, "%04d-%02d-%02d %02d:%02d:%02d",
+            ti->tm_year + 1900, ti->tm_mon + 1, ti->tm_mday,
+            ti->tm_hour, ti->tm_min, ti->tm_sec);
+    return String(buffer);
 }
