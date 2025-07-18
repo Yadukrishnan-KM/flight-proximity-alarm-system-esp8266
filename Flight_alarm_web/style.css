@@ -1,0 +1,412 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f0f2f5;
+    color: #333;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+header {
+    background-color: #2c3e50;
+    color: #ecf0f1;
+    padding: 15px 20px;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+nav {
+    background-color: #34495e;
+    padding: 10px 0;
+    text-align: center;
+}
+nav button {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    margin: 0 5px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+}
+nav button:hover {
+    background-color: #2980b9;
+}
+nav button.active {
+    background-color: #1abc9c;
+}
+main {
+    flex-grow: 1;
+    padding: 20px;
+    max-width: 1000px; /* Wider for data tables */
+    margin: 20px auto;
+    background-color: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+.tab-content {
+    display: none; /* Hidden by default */
+}
+.tab-content.active {
+    display: block; /* Shown when active */
+}
+h2 {
+    color: #2c3e50;
+    border-bottom: 2px solid #eee;
+    padding-bottom: 10px;
+    margin-top: 0;
+}
+h3 {
+    color: #34495e;
+    margin-top: 25px;
+    margin-bottom: 15px;
+}
+
+/* Live Data Specific Styles */
+.status-summary {
+    display: flex;
+    justify-content: space-around;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+    gap: 15px;
+}
+.status-card {
+    background-color: #ecf0f1;
+    padding: 15px 20px;
+    border-radius: 8px;
+    text-align: center;
+    flex: 1;
+    min-width: 150px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    transition: background-color 0.3s ease; /* For smooth color changes if status changes */
+}
+.status-card h4 {
+    margin-top: 0;
+    margin-bottom: 5px;
+    color: #555;
+    font-size: 0.9em;
+}
+.status-card p {
+    margin: 0;
+    font-size: 1.8em;
+    font-weight: bold;
+    color: #2c3e50;
+}
+.status-card.level-1 { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; } /* Reddish for alarm */
+.status-card.level-2 { background-color: #ffeeba; color: #856404; border: 1px solid #ffdf7e; } /* Yellowish for warning */
+.status-card.level-3 { background-color: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; } /* Bluish for detection */
+.status-card.all-clear { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; } /* Green for clear */
+.status-card.error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; } /* Error status also red */
+
+/* Blinking/Pulsing Animation for Alarm */
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); } /* Red with transparency */
+    70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+}
+.status-card.level-1.blink {
+    animation: pulse 1.5s infinite; /* Apply the animation */
+}
+
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    font-size: 0.9em;
+}
+table thead th {
+    background-color: #34495e;
+    color: white;
+    padding: 10px;
+    text-align: left;
+    border-bottom: 2px solid #2c3e50;
+}
+table tbody td {
+    padding: 10px;
+    border-bottom: 1px solid #ddd;
+    vertical-align: top; /* Align content to top for multi-line cells */
+}
+table tbody tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+table tbody tr:hover {
+    background-color: #f0f0f0;
+    cursor: pointer; /* Indicate rows are clickable */
+}
+.no-data {
+    text-align: center;
+    padding: 20px;
+    color: #777;
+    font-style: italic;
+}
+
+/* Sortable table headers - Improved Arrows */
+table th.sortable,
+table th.sortable-modal {
+    cursor: pointer;
+    position: relative;
+    padding-right: 25px; /* Space for arrows */
+    white-space: nowrap; /* Keep text and arrows on one line */
+}
+table th.sortable .sort-indicator,
+table th.sortable-modal .sort-indicator {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    line-height: 0; /* Remove extra space between arrows */
+}
+table th.sortable .arrow-up,
+table th.sortable-modal .arrow-up,
+table th.sortable .arrow-down,
+table th.sortable-modal .arrow-down {
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    opacity: 0.4; /* Faded by default */
+    transition: opacity 0.2s ease;
+}
+table th.sortable .arrow-up,
+table th.sortable-modal .arrow-up {
+    border-bottom: 5px solid white; /* Up arrow */
+    margin-bottom: 1px; /* Small gap between arrows */
+}
+table th.sortable .arrow-down,
+table th.sortable-modal .arrow-down {
+    border-top: 5px solid white; /* Down arrow */
+}
+
+/* Active sorting state */
+table th.sortable.asc .arrow-up,
+table th.sortable-modal.asc .arrow-up {
+    opacity: 1; /* Highlight active arrow */
+}
+table th.sortable.desc .arrow-down,
+table th.sortable-modal.desc .arrow-down {
+    opacity: 1; /* Highlight active arrow */
+}
+table th.sortable.asc .arrow-down,
+table th.sortable-modal.asc .arrow-down,
+table th.sortable.desc .arrow-up,
+table th.sortable-modal.desc .arrow-up {
+    opacity: 0.2; /* Dim inactive arrow */
+}
+
+
+/* Modal styles */
+.modal {
+    display: none; /* Hidden by default */
+    position: fixed; /* Stay in place */
+    z-index: 1000; /* Sit on top */
+    left: 0;
+    top: 0;
+    width: 100%; /* Full width */
+    height: 100%; /* Full height */
+    overflow: auto; /* Enable scroll if needed */
+    background-color: rgba(0,0,0,0.6); /* Darker overlay */
+    justify-content: center;
+    align-items: center;
+}
+.modal-content {
+    background-color: #fefefe;
+    padding: 30px;
+    border-radius: 10px; /* More rounded */
+    width: 90%;
+    max-width: 600px; /* Wider for scan details */
+    text-align: center;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.4); /* Stronger shadow */
+    animation: fadeIn 0.3s ease-out; /* Fade in animation */
+}
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.modal-content h3 {
+    margin-top: 0;
+    color: #2c3e50;
+    font-size: 1.6em; /* Larger heading */
+}
+.modal-content p {
+    font-size: 1.1em;
+    margin-bottom: 25px; /* More space */
+    color: #555;
+}
+.modal-buttons button {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    padding: 12px 25px; /* Larger buttons */
+    margin: 0 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+}
+.modal-buttons button:hover {
+    background-color: #2980b9;
+}
+.modal-buttons button.cancel {
+    background-color: #6c757d;
+}
+.modal-buttons button.cancel:hover {
+    background-color: #5a6268;
+}
+/* Status Modal Specific Styling (cleaner look) */
+.status-modal .modal-content {
+    background-color: #fff;
+    padding: 25px;
+    border: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    max-width: 350px; /* Smaller for status */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+.status-modal p {
+    margin: 0;
+    font-size: 1.1em; /* Slightly smaller for status */
+    font-weight: bold;
+}
+/* Color bar at the top for status messages */
+.status-modal.info .modal-content { border-top: 5px solid #f39c12; }
+.status-modal.success .modal-content { border-top: 5px solid #28a745; }
+.status-modal.error .modal-content { border-top: 5px solid #dc3545; }
+
+/* Specific styles for scan details modal */
+#scanDetailsModal .modal-content {
+    text-align: left;
+    padding: 20px;
+    min-width: 400px; /* Minimum width */
+    min-height: 250px; /* Minimum height */
+    resize: both; /* Allow resizing both horizontally and vertically */
+    overflow: auto; /* Ensure content is scrollable if modal is too small */
+    max-width: 90vw; /* Prevent it from getting too wide */
+    max-height: 90vh; /* Prevent it from getting too tall */
+    position: absolute; /* Changed to absolute for dragging */
+    left: 50%; /* Center initially */
+    top: 50%; /* Center initially */
+    transform: translate(-50%, -50%); /* Adjust for centering */
+}
+#scanDetailsModal h3 {
+    text-align: center;
+    cursor: grab; /* Indicate draggable */
+}
+#scanDetailsModal .modal-body {
+    max-height: calc(100% - 100px); /* Adjust height dynamically */
+    overflow-y: auto;
+    margin-bottom: 20px;
+    padding: 10px;
+    border: 1px solid #eee;
+    border-radius: 5px;
+    background-color: #fcfcfc;
+}
+#scanDetailsModal table {
+    margin-top: 0; /* Remove top margin from general table rule */
+}
+#scanDetailsModal .modal-close {
+    position: absolute;
+    top: 10px;
+    right: 20px;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    color: #aaa;
+}
+#scanDetailsModal .modal-close:hover {
+    color: #555;
+}
+
+
+footer {
+    text-align: center;
+    padding: 20px;
+    color: #777;
+    font-size: 0.9em;
+    margin-top: auto; /* Pushes footer to the bottom */
+}
+
+/* Form specific styles from settings page */
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+    color: #555;
+}
+
+.form-group input[type="text"],
+.form-group input[type="password"],
+.form-group input[type="number"],
+.form-group select {
+    width: calc(100% - 22px); /* Account for padding and border */
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1em;
+}
+
+.form-group input[type="checkbox"] {
+    margin-right: 10px;
+}
+
+.form-group input.invalid {
+    border-color: #dc3545; /* Red border for invalid input */
+}
+
+.error-message {
+    color: #dc3545;
+    font-size: 0.85em;
+    margin-top: 5px;
+    display: none; /* Hidden by default */
+}
+
+.button-group {
+    margin-top: 30px;
+    text-align: center;
+}
+
+.button-group button {
+    background-color: #28a745; /* Green for Save */
+    color: white;
+    border: none;
+    padding: 12px 25px;
+    margin: 0 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+}
+
+.button-group button:hover:not(:disabled) {
+    background-color: #218838;
+}
+
+.button-group button:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+}
+
+.button-group button.default {
+    background-color: #6c757d; /* Gray for Restore Defaults */
+}
+
+.button-group button.default:hover:not(:disabled) {
+    background-color: #5a6268;
+}
+
+.button-group button.reboot {
+    background-color: #dc3545; /* Red for Reboot */
+}
+
+.button-group button.reboot:hover:not(:disabled) {
+    background-color: #c82333;
+}
