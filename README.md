@@ -7,6 +7,8 @@ It is an Internet based flight proximity alarm system to find the Aeroplane acti
 
 Note: This Project is ABANDONING due to out of memory(OOM) issue in the esp8266. Low memory of esp8266 is not allowing to continue the project. Same project is continuing on esp32 as a new project named esp32-flight-proximity-alarm-system-esp8266. Check it out.
 
+Note: Most of the line by line code is created with the help of Gemini AI. 
+
 ## System Overview
 
 The system retrieves real-time flight data primarily from the **OpenSky Network API**, with the flexibility to integrate additional APIs in the future. It offers a comprehensive web-based user interface for configuring various settings and viewing live flight information. Furthermore, it provides **visual (LED)** and **auditory (sound)** alarms triggered by flight proximity.
