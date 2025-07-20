@@ -5,13 +5,14 @@
 #include "alarm_manager.h"    // For updateLED and playAlarmSound
 #include <ArduinoJson.h>
 #include <ESP8266HTTPClient.h>
-#include <WiFiClient.h>       // <-- ADDED THIS LINE: Required for the updated http.begin() method
+#include <WiFiClientSecure.h> // MODIFIED: Use WiFiClientSecure for HTTPS
 #include <math.h>             // For round() and other math functions
-#include <ESP8266WiFi.h>      // <-- ADDED THIS LINE: Necessary for WiFi.status() and overall WiFi connectivity
+#include <ESP8266WiFi.h>      // Necessary for WiFi.status() and overall WiFi connectivity
+//#include <WiFiClientSecureBearSSL.h>
 
 // Forward declaration for calculateDistance (defined later in this file)
-// float calculateDistance(float lat1, float lon1, float lat2, float lon2); // Moved to utils.h
-// int getProximityLevel(float distance, float r1, float r2, float r3); // Renamed to determineProximityLevel in utils.h
+float calculateDistance(float lat1, float lon1, float lat2, float lon2);
+int getProximityLevel(float distance, float r1, float r2, float r3);
 void updateScanHistory(int level1Count, int level2Count, int level3Count, int totalCount, const std::vector<FlightData>& flights);
 String getCurrentFormattedTime();
 
@@ -19,169 +20,105 @@ String getCurrentFormattedTime();
  * @brief Performs a flight scan by querying the OpenSky Network API.
  */
 void performFlightScan() {
-    Serial.println("Performing flight scan...");
+    Serial.println(F("Performing flight scan..."));
+    Serial.print("Free heap at start of scan: "); Serial.println(ESP.getFreeHeap()); // Debugging heap usage
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("WiFi not connected. Cannot perform flight scan.");
+        Serial.println(F("WiFi not connected. Cannot perform flight scan."));
         return;
     }
 
-    WiFiClient client;
+    // Use WiFiClientSecure for HTTPS, or WiFiClient for HTTP
+    // Based on your apiServer URL, if it's "http://", WiFiClient is technically sufficient.
+    // However, if you intend HTTPS (as per your comment in the include), WiFiClientSecure is needed.
+    // Assuming you've corrected the include to <WiFiClientSecure.h>
+    //std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure);
+    //client->setInsecure();
+    WiFiClientSecure client;
     HTTPClient http;
 
-    // Construct the API URL using current settings
-    String url = currentSettings.apiServer + "/api/states/all?" +
-                 "lamin=" + String(currentSettings.latitude - 1.0) + // +/- 1 degree for bbox
-                 "&lamax=" + String(currentSettings.latitude + 1.0) +
-                 "&lomin=" + String(currentSettings.longitude - 1.0) +
-                 "&lomax=" + String(currentSettings.longitude + 1.0);
+    //WiFiClientSecure client; // For HTTPS
+    // For HTTP only: WiFiClient client;
 
+    // IMPORTANT FOR HTTPS: Add this line to allow insecure connections (for testing).
+    // For production, you should verify the server's certificate.
+    //client.setInsecure(); // This is for testing with self-signed or unverified certs. Remove for production with proper certificates.
+
+    
+    /*String apiUrl = "http://opensky-network.org/api/states/all";
+    // Add parameters to API URL
+    apiUrl += "?lamin=" + String(currentSettings.latitude - 1.0, 2); // +/- 1 degree for example bounding box
+    apiUrl += "&lamax=" + String(currentSettings.latitude + 1.0, 2);
+    apiUrl += "&lomin=" + String(currentSettings.longitude - 1.0, 2);
+    apiUrl += "&lomax=" + String(currentSettings.longitude + 1.0, 2);
+    
     Serial.print("Requesting URL: ");
-    Serial.println(url);
+    Serial.println(apiUrl);*/
 
-    http.begin(client, url);
+    Serial.println(F("Attempting http.begin()..."));
+    // Ensure http.begin() uses the correct client (WiFiClient or WiFiClientSecure)
+    if (http.begin(client,"https://opensky-network.org/api/states/all")) { // Pass the client object here
+        Serial.println(F("http.begin() successful. Attempting http.GET()..."));
+        int httpCode = http.GET();
 
-    // Add API Key header if available
-    if (currentSettings.apiKey.length() > 0) {
-        http.addHeader("Authorization", "Bearer " + currentSettings.apiKey);
-    }
+       if (httpCode > 0) {
+            Serial.printf("HTTP GET successful, code: %d\n", httpCode);
+            if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+                String payload = http.getString();
+                Serial.println("Received payload length: " + String(payload.length()));
+                // Serial.println("Payload: " + payload); // Uncomment for full payload debug
 
-    int httpResponseCode = http.GET();
-
-    if (httpResponseCode > 0) {
-        Serial.printf("[HTTP] GET... code: %d\n", httpResponseCode);
-        if (httpResponseCode == HTTP_CODE_OK) {
-            String payload = http.getString();
-            // Serial.println(payload); // For debugging: print the full JSON payload
-
-            // Parse JSON response
-            DynamicJsonDocument doc(4096); // Increased buffer size
-            DeserializationError error = deserializeJson(doc, payload);
-
-            if (error) {
-                Serial.print(F("deserializeJson() failed: "));
-                Serial.println(error.f_str());
-                // Attempt to print part of the payload if deserialization fails for debugging
-                if (payload.length() > 200) {
-                    Serial.print("Partial payload: ");
-                    Serial.println(payload.substring(0, 200));
-                } else {
-                    Serial.print("Payload: ");
-                    Serial.println(payload);
-                }
-                http.end();
-                return;
+                // Process JSON data
+                // ... (your existing JSON parsing logic) ...
+            } else {
+                Serial.printf("HTTP GET failed with code: %d\n", httpCode);
+                // Handle non-200/301 responses
             }
-
-            JsonArray states_array = doc["states"].as<JsonArray>(); // Get the states array
-            if (states_array.isNull()) {
-                Serial.println("Error: 'states' array not found or invalid in JSON response.");
-                http.end();
-                return;
-            }
-
-            currentFlights.clear(); // Clear previous flight data
-            int level1Count = 0;
-            int level2Count = 0;
-            int level3Count = 0;
-
-            for (JsonArray state : states_array) { // Iterate through each flight state (which is an array)
-                if (state.isNull()) {
-                    Serial.println("Warning: Found null state entry in JSON response. Skipping.");
-                    continue;
-                }
-
-                // OpenSky Network API states array indices:
-                // 0: icao24 (string)
-                // 1: callsign (string, can be null)
-                // 2: origin_country (string)
-                // 5: longitude (float, can be null)
-                // 6: latitude (float, can be null)
-                // 7: baro_altitude (float, can be null)
-                // 9: velocity (float, can be null)
-                // 10: true_track (float, can be null)
-
-                // Check if latitude and longitude exist and are not null
-                if (!state[6].isNull() && !state[5].isNull()) {
-                    float flightLat = state[6].as<float>();
-                    float flightLon = state[5].as<float>();
-
-                    float distance = calculateDistance(currentSettings.latitude, currentSettings.longitude, flightLat, flightLon);
-                    int proximityLevel = determineProximityLevel(distance);
-
-                    FlightData flight;
-                    flight.icao24 = state[0].as<String>();
-                    flight.callsign = state[1].isNull() ? "N/A" : state[1].as<String>(); // Handle null callsign
-                    flight.origin_country = state[2].as<String>();
-                    flight.latitude = flightLat;    // ADDED: Assign latitude
-                    flight.longitude = flightLon;   // ADDED: Assign longitude
-                    flight.altitude_baro = state[7] | 0.0; // Use | for default if null
-                    flight.velocity = state[9] | 0.0;       // Use | for default if null
-                    flight.true_track = state[10] | 0.0;    // Use | for default if null
-                    flight.distance_km = distance;
-                    flight.proximity_level = proximityLevel;
-                    flight.operatorName = "N/A"; // OpenSky /states/all does not directly provide this
-                    flight.destination = "N/A";  // OpenSky /states/all does not directly provide this
-                    flight.source = "N/A";       // OpenSky /states/all does not directly provide this
-                    flight.international_domestic = "Unknown"; // Derive if possible from other data, else default
-
-                    currentFlights.push_back(flight);
-
-                    if (proximityLevel == 1) {
-                        level1Count++;
-                    } else if (proximityLevel == 2) {
-                        level2Count++;
-                    } else if (proximityLevel == 3) {
-                        level3Count++;
-                    }
-                }
-            }
-
-            int totalFlights = currentFlights.size();
-            Serial.printf("Scan complete. Total flights: %d, Level 1: %d, Level 2: %d, Level 3: %d\n",
-                          totalFlights, level1Count, level2Count, level3Count);
-
-            updateScanHistory(level1Count, level2Count, level3Count, totalFlights, currentFlights);
-
-            // Determine overall alarm level and update LED/sound
-            int newOverallAlarmLevel = 0;
-            if (level1Count > 0) {
-                newOverallAlarmLevel = 1;
-            } else if (level2Count > 0) {
-                newOverallAlarmLevel = 2;
-            } else if (level3Count > 0) {
-                newOverallAlarmLevel = 3;
-            }
-
-            if (newOverallAlarmLevel != currentOverallAlarmLevel) {
-                currentOverallAlarmLevel = newOverallAlarmLevel;
-                updateLED(currentOverallAlarmLevel);
-                if (currentSettings.soundWarning) {
-                    playAlarmSound(currentOverallAlarmLevel);
-                }
-            }
+        } else {
+            Serial.printf("HTTP GET failed, error: %s\n", http.errorToString(httpCode).c_str());
+            // This is where connection errors or no response would be caught
         }
     } else {
-        Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpResponseCode).c_str());
+       // Serial.println("❌ http.begin() failed to connect to " + apiUrl);
+        // This indicates a fundamental issue like DNS resolution or initial connection setup.
     }
 
-    http.end(); // Free the resources
-    startFlightScanTimer(); // Restart the timer for the next scan
+    // Always call end() to free resources, even if begin() failed
+    http.end();
+    Serial.print("Free heap after scan: "); Serial.println(ESP.getFreeHeap()); // Debugging heap usage
 }
 
-/**
- * @brief Starts or restarts the flight scan timer based on detected flights.
- */
+
+
 void startFlightScanTimer() {
-    unsigned long scanInterval = (currentFlights.empty() || currentOverallAlarmLevel == 0) ?
-                                 (unsigned long)currentSettings.noFlightScanFreq * 1000 :
-                                 (unsigned long)currentSettings.flightPresentScanFreq * 1000;
+    Serial.println(F("Setting next flight scan timer."));
+    // Schedule the next scan based on current alarm level.
+    // Use flightPresentScanFreq if any alarm level is active, otherwise noFlightScanFreq.
+    int scanFrequency = (currentOverallAlarmLevel > 0) ? currentSettings.flightPresentScanFreq : currentSettings.noFlightScanFreq;
 
-    Serial.printf("Setting next scan in %lu seconds.\n", scanInterval / 1000);
-    flightScanTicker.once_ms(scanInterval, performFlightScan);
+    // Detach any existing ticker before attaching a new one
+    flightScanTicker.detach();
+
+    // Attach the ticker to call performFlightScan() after 'scanFrequency' seconds
+    flightScanTicker.once(scanFrequency, performFlightScan);
 }
 
 /**
- * @brief Updates the scan history with results from the latest scan.
+ * @brief Determines the proximity level of a flight based on distance and configured radii.
+ * @param distance Distance of the flight in kilometers.
+ * @param r1 Radius for Level 1 (most critical).
+ * @param r2 Radius for Level 2.
+ * @param r3 Radius for Level 3.
+ * @return Proximity level (1, 2, 3, or 0 for none).
+ */
+int getProximityLevel(float distance, float r1, float r2, float r3) {
+    if (distance <= r1) return 1;
+    if (distance <= r2) return 2;
+    if (distance <= r3) return 3;
+    return 0; // No proximity alarm
+}
+
+/**
+ * @brief Updates the global scan history.
  * @param level1Count Number of flights in Level 1.
  * @param level2Count Number of flights in Level 2.
  * @param level3Count Number of flights in Level 3.

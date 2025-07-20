@@ -1,38 +1,39 @@
 // ESP8266_Flight_Proximity_Alarm_System.ino
+
 #include <Arduino.h>
 #include "globals.h"
-#include "settings_manager.h" // Still needed for loadSettings(), saveSettings()
-#include "wifi_manager.h"     // Still needed for connectWiFi(), handleWifiConnection()
+#include "settings_manager.h"
+#include "wifi_manager.h"
 #include "alarm_manager.h"
 #include "flight_scanner.h"
-// #include "web_server_handlers.h" // Removed: Its logic is now inline or integrated
-#include <FS.h>               // NEW: Include FS.h for SPIFFS operations (replaces LittleFS.h)
+#include "web_server_handlers.h"
+#include <FS.h>                  // For SPIFFS
 
-// Add this function somewhere in your ESP8266_Flight_Proximity_Alarm_System.ino file,
-// outside of setup() or loop(), e.g., at the end of the file.
-void listLittleFSContents() { // Renamed from listLittleFSContents for clarity, but logic now uses SPIFFS
-    Serial.println("\n--- Listing SPIFFS Contents ---");
-    // Change LittleFS.openDir to SPIFFS.openDir
-    Dir dir = SPIFFS.openDir("/"); // Open the root directory of SPIFFS
+// Existing listLittleFSContents function (already using SPIFFS)
+void listLittleFSContents() {
+  
+    Serial.println(F("\n--- Listing SPIFFS Contents ---"));
+    Dir dir = SPIFFS.openDir("/");
     int fileCount = 0;
     while (dir.next()) {
         fileCount++;
-        Serial.print("File: ");
-        Serial.print(dir.fileName()); // Get the file name
-        Serial.print(" (Size: ");
-        Serial.print(dir.fileSize()); // Get the file size
-        Serial.println(" bytes)");
+        Serial.print(F("File: "));
+        Serial.print(dir.fileName());
+        Serial.print(F(" (Size: "));
+        Serial.print(dir.fileSize());
+        Serial.println(F(" bytes)"));
     }
     if (fileCount == 0) {
-        Serial.println("No files found on SPIFFS.");
+        Serial.println(F("No files found on SPIFFS."));
     }
-    Serial.println("--- SPIFFS Listing Complete ---\n");
+    Serial.println(F("--- SPIFFS Listing Complete ---\n"));
 }
 
 
 void setup() {
+  
     Serial.begin(115200);
-    Serial.println("\nFlight Proximity Alarm System Starting...");
+    Serial.println(F("\nFlight Proximity Alarm System Starting..."));
 
     // Initialize hardware pins
     pinMode(LED_BUILTIN_PIN, OUTPUT);
@@ -41,68 +42,67 @@ void setup() {
     analogWriteFreq(8000);              // Set PWM frequency for audio (e.g., 8kHz)
     analogWriteRange(1023);             // Set PWM range to 10-bit
 
-    // --- File System Initialization (Changed to SPIFFS) ---
-    Serial.println("Initializing File System (SPIFFS)...");
-    // Change LittleFS.begin() to SPIFFS.begin()
+    // --- File System Initialization (Using SPIFFS) ---
+    Serial.println(F("Initializing File System (SPIFFS)..."));
     if (!SPIFFS.begin()) {
-        Serial.println("❌ An Error has occurred while mounting SPIFFS. Check wiring or ESP8266 board settings (Flash Size > FS size).");
-        return; // Stop if SPIFFS can't be mounted
+        Serial.println(F("❌ An Error has occurred while mounting SPIFFS. Check wiring or ESP8266 board settings (Flash Size > FS size)."));
+        return;
     }
-    Serial.println("✅ SPIFFS mounted successfully.");
+    Serial.println(F("✅ SPIFFS mounted successfully."));
 
-    // Call the function to list contents right after successful mount
     listLittleFSContents(); // This function now uses SPIFFS internally
-
-    // Load settings from file system
-    loadSettings();
+    loadSettings(); // Load settings from file system (settings_manager.cpp will handle this)
 
     // Connect to WiFi or start AP
     connectWiFi();
 
-    // --- Web Server Setup (Changed to SPIFFS) ---
-
+    // --- Web Server Setup ---
     // IMPORTANT: Explicitly handle the root path ("/") to serve index.html
     server.on("/", HTTP_GET, []() {
-        // Change LittleFS.exists to SPIFFS.exists
         if (SPIFFS.exists("/index.html")) {
-            // Change LittleFS.open to SPIFFS.open
             server.send(200, "text/html", SPIFFS.open("/index.html", "r").readString());
         } else {
-            Serial.println("Error: /index.html not found on SPIFFS for root request!");
+            Serial.println(F("Error: /index.html not found on SPIFFS for root request!"));
             server.send(404, "text/plain", "404: index.html not found for root path");
         }
     });
 
-    // Handle requests for other static files (like /style.css, /script.js, or other HTML pages like /livedata.html)
-    // This will serve any file that exactly matches a path in the SPIFFS root
-    // Change LittleFS to SPIFFS here
+    // Handle requests for other static files (like /style.css, /script.js)
     server.serveStatic("/", SPIFFS, "/");
+
+    // --- API ENDPOINT REGISTRATIONS
+    server.on("/getSettings", HTTP_GET, handleGetSettings);
+    server.on("/saveSettings", HTTP_POST, handleSaveSettings);
+    server.on("/restoreDefaults", HTTP_GET, handleRestoreDefaults);
+    server.on("/rebootESP", HTTP_GET, handleRebootESP);
+
+    // You would add handlers for livedat_2.html here later:
+    server.on("/getLiveData", HTTP_GET, handleGetLiveData); // For live data updates
+    server.on("/getScanHistory", HTTP_GET, handleGetScanHistory); // For scan history
 
     // --- 404 Not Found Handler ---
     server.onNotFound([]() {
-        Serial.print("404 Not Found: ");
+        Serial.print(F("404 Not Found: "));
         Serial.println(server.uri());
         server.send(404, "text/plain", "404: Not Found on Server. (General fallback)");
     });
 
     // Start HTTP server
     server.begin();
-    Serial.println("✅ HTTP server started.");
+    Serial.println(F("✅ HTTP server started."));
 
     // Initial LED state based on loaded settings (if any alarm was active from previous run)
     updateLED(currentOverallAlarmLevel);
 
     // Start the first flight scan after a short delay
-    // performFlightScan will re-schedule itself based on settings
     startFlightScanTimer();
 }
 
 void loop() {
-    server.handleClient();     // Handle incoming web requests
-    handleWifiConnection();    // Manage WiFi connection (reconnect if needed, handle AP DNS)
-    timeClient.update();       // Keep NTP time updated
+  
+    performFlightScan();
+    server.handleClient();
+    handleWifiConnection();
+    timeClient.update();
 
-    // No blocking delays in loop! All periodic tasks are handled by Ticker.
-    // If you need complex LED blinking patterns, implement them using millis()
-    // or another Ticker in alarm_manager.cpp/h.
 }

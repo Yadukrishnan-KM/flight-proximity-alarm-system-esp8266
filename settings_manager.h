@@ -3,13 +3,12 @@
 #define SETTINGS_MANAGER_H
 
 #include <Arduino.h>
-#include <LittleFS.h> // For ESP8266 core 3.0.0+, use <FS.h> for older SPIFFS
-#include <ArduinoJson.h>
+#include <FS.h> // For SPIFFS
 #include "globals.h" // For AppSettings struct
 
 // Function declarations
-void initFS();
 void loadSettings();
-void saveSettings();
+bool saveSettings();
+bool resetAppSettingsToDefaults(); // NEW: Function to reset settings to default values
 
 #endif // SETTINGS_MANAGER_H

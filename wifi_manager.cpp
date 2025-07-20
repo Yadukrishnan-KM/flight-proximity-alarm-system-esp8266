@@ -5,11 +5,12 @@
  * @brief Connects to WiFi or starts AP if connection fails.
  */
 void connectWiFi() {
-    Serial.print("Connecting to WiFi: ");
+    Serial.print(F("Connecting to WiFi: "));
     Serial.println(currentSettings.ssid);
 
     WiFi.mode(WIFI_STA);
-    WiFi.begin(currentSettings.ssid.c_str(), currentSettings.password.c_str());
+    //WiFi.begin(currentSettings.ssid.c_str(), currentSettings.password.c_str());
+    WiFi.begin("OnePlus NordCE 5G","c67hu553");
 
     int attempts = 0;
     while (WiFi.status() != WL_CONNECTED && attempts < 40) { // Try for 20 seconds
@@ -19,12 +20,12 @@ void connectWiFi() {
     }
 
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\nWiFi connected.");
-        Serial.print("IP Address: ");
+        Serial.println(F("\nWiFi connected."));
+        Serial.print(F("IP Address: "));
         Serial.println(WiFi.localIP());
         timeClient.begin(); // Start NTP client once connected
     } else {
-        Serial.println("\nFailed to connect to WiFi. Starting AP mode.");
+        Serial.println(F("\nFailed to connect to WiFi. Starting AP mode."));
         startAP();
     }
 }
@@ -35,7 +36,7 @@ void connectWiFi() {
 void startAP() {
     WiFi.mode(WIFI_AP);
     WiFi.softAP(AP_SSID, AP_PASSWORD);
-    Serial.print("AP Started. IP Address: ");
+    Serial.print(F("AP Started. IP Address: "));
     Serial.println(WiFi.softAPIP());
 
     // DNS server for captive portal
@@ -49,7 +50,7 @@ void startAP() {
  */
 void handleWifiConnection() {
     if (WiFi.status() != WL_CONNECTED && WiFi.getMode() == WIFI_STA) {
-        Serial.println("WiFi disconnected. Attempting to reconnect...");
+        Serial.println(F("WiFi disconnected. Attempting to reconnect..."));
         connectWiFi(); // Try reconnecting
     }
     // If in AP mode, handle DNS requests

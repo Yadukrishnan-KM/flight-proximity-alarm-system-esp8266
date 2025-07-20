@@ -11,4 +11,4 @@ void startAudioPlayback(const uint8_t* audioData, size_t dataSize);
 void playAlarmSound(int level);
 void updateLED(int level);
 
-#endif // ALARM_MANAGER_H
+#endif

@@ -3,21 +3,21 @@
 #define WEB_SERVER_HANDLERS_H
 
 #include <Arduino.h>
-#include <LittleFS.h> // For ESP8266 core 3.0.0+, use <FS.h> for older SPIFFS
-#include <ArduinoJson.h>
-#include "globals.h" // For server, currentSettings, currentFlights, scanHistory
-#include "settings_manager.h" // For saveSettings
-#include "wifi_manager.h" // For connectWiFi, startAP
+#include <ESP8266WebServer.h> // For server object
+#include <FS.h>               // For SPIFFS (if handlers use it directly)
+#include <ArduinoJson.h>      // For JSON parsing/serialization in handlers
+#include <Esp.h>              // For ESP.restart() in handleRebootESP
 
-// Function declarations
-void serveStaticFile(const String& path, const String& contentType);
-void handleRoot();
-void handleSettingsPage(); // This will serve index.html with settings tab active
+// Function declarations for API handlers
+void handleGetSettings();
 void handleSaveSettings();
-void handleReboot();
-void handleCurrentFlightsApi();
-void handleScanHistoryApi();
-void handleNotFound();
-void setupWebServer();
+void handleRestoreDefaults();
+void handleRebootESP();
+// Declare Live Data/Scan History handlers here when you implement them
+void handleGetLiveData();
+void handleGetScanHistory();
+
+// If you had a setupWebServer() function, its declaration would go here too:
+// void setupWebServer();
 
 #endif // WEB_SERVER_HANDLERS_H
